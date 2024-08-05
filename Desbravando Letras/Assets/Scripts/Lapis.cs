@@ -19,13 +19,18 @@ public class FreeDraw : MonoBehaviour
 
     private bool isDrawing = false; // Variável para controlar se está desenhando ou não
     private bool isTouchingA = false; // Variável para controlar se a ponta da linha está tocando um objeto com a tag "A"
+    private bool isTouchingB = false; // Variável para controlar se a ponta da linha está tocando um objeto com a tag "B"
 
     private Collider2D letterColliderA; // Collider da letra A
+    private Collider2D letterColliderB; // Collider da letra B
     private GameObject letterObjectA; // Objeto da letra A
     private GameObject letterObjectB; // Objeto da letra B
 
     [SerializeField]
     private float requiredPercentage = 60f; // Porcentagem requerida de pintura
+
+    private float totalPaintedAreaA = 0f; // Área total pintada em A
+    private float totalPaintedAreaB = 0f; // Área total pintada em B
 
     void Start()
     {
@@ -46,6 +51,7 @@ public class FreeDraw : MonoBehaviour
         letterObjectB = GameObject.FindGameObjectWithTag("B");
         if (letterObjectB != null)
         {
+            letterColliderB = letterObjectB.GetComponent<Collider2D>();
             letterObjectB.SetActive(false);
         }
     }
@@ -58,11 +64,13 @@ public class FreeDraw : MonoBehaviour
             {
                 Vector3 startPosition = Camera.main.ScreenToWorldPoint(Input.mousePosition);
                 startPosition.z = 0f;
-                bool currentlyTouchingA = CheckLineCollision(startPosition);
+                bool currentlyTouchingA = CheckLineCollision(startPosition, "A");
+                bool currentlyTouchingB = CheckLineCollision(startPosition, "B");
 
-                // Inicia uma nova linha com a cor correta dependendo se está em contato com "A" ou não
-                StartNewLine(currentlyTouchingA ? collisionLineColor : originalColor, startPosition);
+                // Inicia uma nova linha com a cor correta dependendo se está em contato com "A" ou "B" ou não
+                StartNewLine((currentlyTouchingA || currentlyTouchingB) ? collisionLineColor : originalColor, startPosition);
                 isTouchingA = currentlyTouchingA;
+                isTouchingB = currentlyTouchingB;
             }
 
             if (Input.GetMouseButton(0))
@@ -70,9 +78,10 @@ public class FreeDraw : MonoBehaviour
                 Vector3 currentPosition = Camera.main.ScreenToWorldPoint(Input.mousePosition);
                 currentPosition.z = 0f;
 
-                if (points.Count == 0 || Vector3.Distance(points[points.Count - 1], currentPosition) > 0.001f)
+                if (points.Count == 0 || Vector3.Distance(points[points.Count - 1], currentPosition) > 0.0001f) // Ajuste a distância mínima aqui
                 {
-                    bool currentlyTouchingA = CheckLineCollision(currentPosition);
+                    bool currentlyTouchingA = CheckLineCollision(currentPosition, "A");
+                    bool currentlyTouchingB = CheckLineCollision(currentPosition, "B");
 
                     if (currentlyTouchingA && !isTouchingA)
                     {
@@ -86,31 +95,63 @@ public class FreeDraw : MonoBehaviour
                         isTouchingA = false;
                         StartNewLine(originalColor, currentPosition);
                     }
+                    else if (currentlyTouchingB && !isTouchingB)
+                    {
+                        // Se a linha entra em contato com um objeto "B" e não estava tocando antes
+                        isTouchingB = true;
+                        StartNewLine(collisionLineColor, currentPosition);
+                    }
+                    else if (!currentlyTouchingB && isTouchingB)
+                    {
+                        // Se a linha sai de um contato com um objeto "B" e estava tocando antes
+                        isTouchingB = false;
+                        StartNewLine(originalColor, currentPosition);
+                    }
                     else
                     {
                         // Continua a linha atual
                         AddPointToLine(currentPosition);
                     }
-                }
 
-                if (letterColliderA != null)
-                {
-                    // Calcula a área pintada até o momento dentro do objeto "A"
-                    float paintedArea = CalculatePaintedAreaInsideA();
-
-                    // Calcula a porcentagem pintada em relação à área total da letra
-                    float percentagePainted = (paintedArea / CalculateLetterArea(letterColliderA)) * 100f;
-
-                    // Exemplo de uso: imprime a porcentagem pintada no console
-                    Debug.Log("Porcentagem Pintada: " + percentagePainted.ToString("F2") + "%");
-
-                    // Se a porcentagem pintada for igual ou superior à porcentagem requerida, oculta o objeto A e mostra o objeto B
-                    if (percentagePainted >= requiredPercentage)
+                    // Acumula a área pintada dentro dos objetos "A" e "B"
+                    if (currentlyTouchingA && points.Count > 1)
                     {
-                        letterObjectA.SetActive(false);
-                        letterObjectB.SetActive(true);
+                        totalPaintedAreaA += Vector3.Distance(points[points.Count - 2], points[points.Count - 1]) * lineWidth;
+                    }
+                    if (currentlyTouchingB && points.Count > 1)
+                    {
+                        totalPaintedAreaB += Vector3.Distance(points[points.Count - 2], points[points.Count - 1]) * lineWidth;
                     }
                 }
+            }
+        }
+
+        // Verifica a porcentagem pintada em A
+        if (letterColliderA != null)
+        {
+            float percentagePaintedA = (totalPaintedAreaA / CalculateLetterArea(letterColliderA)) * 100f;
+            Debug.Log("Porcentagem Pintada A: " + percentagePaintedA.ToString("F2") + "%");
+
+            if (percentagePaintedA >= requiredPercentage && letterObjectA.activeSelf)
+            {
+                Debug.Log("A pintada! Ocultando A e exibindo B.");
+                letterObjectA.SetActive(false);
+                letterObjectB.SetActive(true);
+                ClearDrawing();
+            }
+        }
+
+        // Verifica a porcentagem pintada em B
+        if (letterColliderB != null)
+        {
+            float percentagePaintedB = (totalPaintedAreaB / CalculateLetterArea(letterColliderB)) * 100f;
+            Debug.Log("Porcentagem Pintada B: " + percentagePaintedB.ToString("F2") + "%");
+
+            if (percentagePaintedB >= requiredPercentage && letterObjectB.activeSelf)
+            {
+                Debug.Log("B completamente pintada!");
+                letterObjectB.SetActive(false);
+                ClearDrawing();
             }
         }
     }
@@ -156,9 +197,12 @@ public class FreeDraw : MonoBehaviour
 
     void AddPointToLine(Vector3 position)
     {
-        points.Add(position);
-        currentLine.positionCount = points.Count;
-        currentLine.SetPosition(points.Count - 1, position);
+        if (currentLine != null)
+        {
+            points.Add(position);
+            currentLine.positionCount = points.Count;
+            currentLine.SetPosition(points.Count - 1, position);
+        }
     }
 
     void ToggleDrawing()
@@ -173,12 +217,12 @@ public class FreeDraw : MonoBehaviour
         }
     }
 
-    bool CheckLineCollision(Vector3 position)
+    bool CheckLineCollision(Vector3 position, string tag)
     {
         Collider2D collider = Physics2D.OverlapPoint(position);
 
-        // Se a ponta da linha tocar um objeto com a tag "A", retorna true
-        if (collider != null && collider.CompareTag("A"))
+        // Se a ponta da linha tocar um objeto com a tag especificada, retorna true
+        if (collider != null && collider.CompareTag(tag))
         {
             return true;
         }
@@ -186,37 +230,32 @@ public class FreeDraw : MonoBehaviour
         return false;
     }
 
-    float CalculatePaintedAreaInsideA()
-    {
-        if (letterColliderA == null)
-        {
-            return 0f;
-        }
-
-        float paintedArea = 0f;
-        for (int i = 1; i < points.Count; i++)
-        {
-            Vector3 midPoint = (points[i] + points[i - 1]) / 2;
-
-            if (letterColliderA.OverlapPoint(midPoint))
-            {
-                paintedArea += Vector3.Distance(points[i], points[i - 1]) * lineWidth;
-            }
-        }
-
-        return paintedArea;
-    }
-
     float CalculateLetterArea(Collider2D collider)
     {
-        // Obtém o tamanho da caixa delimitadora do collider da letra
+        if (collider == null) return 0f;
+
+        // Obtém o tamanho do collider e calcula a área (aproximada para um retângulo)
         Bounds bounds = collider.bounds;
-        return bounds.size.x * bounds.size.y; // Área = largura * altura
+        return bounds.size.x * bounds.size.y;
     }
 
-    // Método público para definir a porcentagem requerida de pintura
-    public void SetRequiredPercentage(float percentage)
+    void ClearDrawing()
     {
-        requiredPercentage = percentage;
+        // Destroi todos os objetos com a tag "Line"
+        GameObject[] lines = GameObject.FindGameObjectsWithTag("Line");
+        foreach (GameObject line in lines)
+        {
+            Destroy(line);
+        }
+
+        // Limpa a linha atual
+        if (currentLine != null)
+        {
+            Destroy(currentLine.gameObject);
+            currentLine = null;
+        }
+
+        // Limpa a lista de pontos
+        points.Clear();
     }
 }
